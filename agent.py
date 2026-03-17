@@ -6,8 +6,11 @@ HEADERS = {"X-API-Key": API_KEY}
 
 POS_PCT = 1.00
 STOP = 0.20
-RANGE_WIN = 140
+RANGE_WIN = 10
 EVENT_MOVE_PCT = 0.08
+PANIC_UP_RET = 0.20
+PANIC_DEFAULT_RET = 0.25
+PANIC_3BAR_RET = 0.30
 
 def get_price():
     return requests.get(f"{API_URL}/api/price", headers=HEADERS, timeout=5).json()
@@ -22,7 +25,7 @@ def sell(qty):
     return requests.post(f"{API_URL}/api/sell", json={"quantity": qty}, headers=HEADERS, timeout=5).json()
 
 def decide(hist, port, price, state):
-    min_needed = max(RANGE_WIN + 2, 50)
+    min_needed = max(RANGE_WIN + 2, 8)
     if len(hist) < min_needed:
         return "hold", 0
 
@@ -38,10 +41,8 @@ def decide(hist, port, price, state):
     state["major_up_seen"] = state.get("major_up_seen", False) or major_up_seen
     state["major_down_seen"] = state.get("major_down_seen", False) or major_down_seen
 
-    recent_low = p[-RANGE_WIN-1:-1].min()
-
-    panic_ret = 0.06 if major_up_seen and (not major_down_seen) else 0.08
-    panic_down = (ret1 < -panic_ret) or ((ret3 < -0.10) and (p[-1] < recent_low * 0.99))
+    panic_ret = PANIC_UP_RET if (major_up_seen and (not major_down_seen)) else PANIC_DEFAULT_RET
+    panic_down = (ret1 < -panic_ret) or (ret3 < -PANIC_3BAR_RET)
     if panic_down:
         return "sell", port.get("shares", 0)
 
@@ -55,7 +56,6 @@ def decide(hist, port, price, state):
 if __name__ == "__main__":
     hist = []
     state = {
-        "entry": None,
         "major_up_seen": False,
         "major_down_seen": False,
     }
@@ -77,12 +77,10 @@ if __name__ == "__main__":
 
             if action == "buy" and qty > 0 and port.get("shares", 0) == 0:
                 buy(qty)
-                state["entry"] = price
                 print(f"BUY  {qty} @ {price:.4f}")
             elif action == "sell" and port.get("shares", 0) > 0:
                 sell(port["shares"])
                 print(f"SELL {port['shares']} @ {price:.4f}")
-                state["entry"] = None
             else:
                 print(
                     f"HOLD | {price:.4f} | pnl={port['pnl_pct']:+.2f}% | "
